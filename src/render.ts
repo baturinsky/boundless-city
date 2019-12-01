@@ -38,8 +38,6 @@ const fullScreenQuad = {
   position: [-1, -1, 0, 1, 1, 0, -1, 1, 0, -1, -1, 0, 1, -1, 0, 1, 1, 0]
 };
 
-const up = [0, 0, 1];
-
 let textTexture: WebGLTexture;
 
 export async function prepareRender(
@@ -219,7 +217,8 @@ export async function prepareRender(
     collected: Uint8Array,
     checkpoint: Vec3,
     previousCheckpoint: Vec3,
-    musicTime: number
+    musicTime: number,
+    tilt: number
   ) => void;
 
   //gl.enable(gl.CULL_FACE);
@@ -235,7 +234,8 @@ export async function prepareRender(
     collected: Uint8Array,
     checkpoint: Vec3,
     previousCheckpoint: Vec3,
-    musicTime: number
+    musicTime: number,
+    tilt: number
   ) => {
     const fov = (40 * Math.PI) / 180;
     const aspect = canvas.clientWidth / canvas.clientHeight;
@@ -243,7 +243,12 @@ export async function prepareRender(
     const zFar = 2000;
     const perspective = m4.perspective(fov, aspect, zNear, zFar);
 
-    const camera = m4.lookAt(eye, v3.add(eye, direction), up);
+
+    let up:Vec3 = [0, 0, 1];
+    
+    //up = m4.transformPoint(m4.axisRotation(direction, tilt), up);
+
+    let camera = m4.lookAt(eye, v3.add(eye, direction), up);
 
     const raycastCamera = m4.lookAt([0, 0, 0], direction, up);
     const raycastProjection = m4.inverse(

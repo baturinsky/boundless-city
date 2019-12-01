@@ -136,7 +136,7 @@ void drawWindows(){
       window = false;
   }
   
-  normal.a = (window?windowness:0.) * (0.8 + sin((u_musicTime / 0.357 / 4. + mod(v_slot.x + v_slot.y, 2.) ) * PI) * 0.2);
+  normal.a = (window?windowness:0.) * (.7 + sin((u_musicTime / 0.69 / 2. + mod(v_slot.x + v_slot.y, 4.) / 2. ) * PI) * .35);
 }
 
 void main() {

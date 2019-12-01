@@ -251,14 +251,15 @@ void drawWindows(){
     window = v_side>=2 && windowness >= 0.;    
   }
 
+  vec2 windowId;
   if(window){
-    vec2 windowId = floor(wuv * v_windows);
+    windowId = floor(wuv * v_windows);
     bool lit = v_windows == vec2(1.) || fract(rand2(windowId*0.01 + v_cubeID * 101. + float(v_side) * 0.13) * (u_time / 1000. + 1.)) > 0.3;
     if(!lit)
       window = false;
   }
   
-  normal.a = (window?windowness:0.) * (0.8 + sin(u_musicTime/0.35) * 0.1);
+  normal.a = (window?windowness:0.) * (.7 + sin((u_musicTime / 0.69 / 2. + mod(v_slot.x + v_slot.y, 4.) / 2. ) * PI) * .35);
 }
 
 void main() {
@@ -274,7 +275,7 @@ void main() {
   }
 
 
-  if(!gl_FrontFacing){
+  if(gl_FrontFacing == false){
     outEverything.b = 1.;
     return;  
   }
@@ -950,7 +951,7 @@ void makeSlope(){
   if(corner.z < 0.)
     return;
   int slopeDir = int(rand(v_cubeID*253.) * 4.);  
-  float slope = -1. + 1.8 * rand(v_cubeID*253.);
+  float slope = -0.2 + 1.6 * rand(v_cubeID*253.);
   if(dot(kernel[slopeDir], corner.xy)>0.){
     corner.z = -1.;
     v_windows *= 0.;
@@ -1023,7 +1024,7 @@ void main() {
 
   float distToCheckpoint = distance(slot, u_checkpoint);
   
-  bool isCheckpoint = distToCheckpoint <= .1;
+  bool isCheckpoint = distToCheckpoint <= .3;
 
   if(!isCheckpoint && distToCheckpoint <= 2.)
     return;

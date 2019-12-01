@@ -58,7 +58,7 @@ const upgradeDescriptions = {
     "You gain {0/25/50/75/100/125} more velocity when collecting a cluster.",
   rewind:
     "You rewind back to previous checkpoint up to {0/1/2/3} times when crashing.",
-  rewindCheckpoint: "You get 1 more rewind when reaching checkpoint.",
+  rewindCheckpoint: "You get 1 more rewind when reaching a checkpoint.",
   pickup: "You can collect checkpoint from a longer distance",
   friction: "Air friction is reduced by {0/10%/20%/30%/40%/50%}",
   time:
@@ -304,6 +304,9 @@ let music: {
   gain: GainNode;
 };
 
+let tilt = 0;
+
+
 window.onload = async e => {
   let renderHQ = await prepareRender(crash, collectCluster, 2);
   let renderLQ = await prepareRender(crash, collectCluster, 1);
@@ -331,6 +334,14 @@ window.onload = async e => {
     runLoop();
   }
 
+  function resetAll(){
+    restart();
+    coins = 100;
+    upgrades = {};
+    updateUpgrades();
+    save();
+  }
+  
   window["restartGame"] = () => restart();
 
   //canvas.requestPointerLock();
@@ -346,6 +357,11 @@ window.onload = async e => {
       restart();
       return;
     }
+
+    if (e.code == "KeyN" && e.shiftKey) {
+      resetAll();
+    }
+
 
     if (e.code == "KeyP") {
       rewind();
@@ -364,7 +380,7 @@ window.onload = async e => {
 
   canvas.addEventListener("mousedown", async e => {
     if (!music) {
-      music = await playFile("/Boundless_City.mp3");
+      music = await playFile("Boundless_City_v2.mp3");
       if (mute) music.context.suspend();
     }
     if (!active()) canvas.requestPointerLock();
@@ -397,7 +413,8 @@ window.onload = async e => {
       game.collected,
       game.checkpoint,
       game.previousCheckpoint.pos.map(v => v / blockSize),
-      music ? music.context.currentTime : 0
+      music ? music.context.currentTime : 0,
+      tilt * 0.001
     );
   }
 
@@ -467,6 +484,9 @@ window.onload = async e => {
       Math.cos(pitch) * Math.sin(yaw),
       Math.sin(pitch)
     ]);
+
+    tilt += mouseDelta[0];
+    tilt *= (1 - 10. * dTime);
 
     mouseDelta = [0, 0];
 
