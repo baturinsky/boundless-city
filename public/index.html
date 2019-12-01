@@ -1,0 +1,128 @@
+  <html>
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" 
+  type="image/png" 
+  href="favicon.png">
+</head>
+<title>Glide</title>
+
+<style>
+  body {
+    margin: 0;
+    font-family: monospace;
+  }
+
+  canvas {
+    position: fixed;
+    display: block;
+    width: 100%;
+    height: 100%;
+    image-rendering: pixelated;
+  }
+
+  .stats{
+    font-family: 'Courier New', Courier, monospace;
+    position:fixed;
+    font-size: 18pt;
+    z-index: 10;
+    bottom:0px;
+    left:0px;
+    color: white;
+    width: 100%;  
+    text-align: center;
+    text-shadow: 2px 2px 1px black;
+  }
+
+  .orbs {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr 1fr;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 26pt;
+    position:fixed;
+    top:0px;
+    left:0px;
+    width: 100%;
+    text-align: center;
+    z-index: 10;
+    color: white;
+    text-shadow: 2px 2px 1px black;
+  }
+
+  .pause{
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 14pt;
+    position:fixed;
+    top:50px;
+    left:0px;
+    width: calc(100% - 100px);
+    color: white;
+    text-align: center;
+    z-index: 10;
+    background: rgba(0, 0, 0, 0.8);
+    padding: 0px;
+    margin: 50px;
+    visibility: hidden;
+    pointer-events: none;
+    padding: 10px;
+  }
+
+  .pause > h2{
+    color:rgba(0, 255, 100, 1);
+    text-shadow: 1px 1px 1px black;
+  }
+
+  .upgrades{
+    display: grid;
+    grid-template-columns: 100px 100px 100px auto;    
+  }
+
+  .upgrades > div{
+    margin: 5px;
+  }
+
+  .coin{
+    color:yellow;
+    font-weight: bold;
+  }
+
+  button{
+    pointer-events: all;
+    background: black;
+    border: solid 1px #888;
+    cursor:pointer;
+    color:white;
+  }  
+
+  button:hover{
+    background: #333;
+  }
+
+  button:disabled{
+    background: none;
+    cursor: not-allowed;
+    opacity: 0.5;
+    border: solid 1px #333;
+  }      
+
+</style>
+</head>
+
+<body>
+  <canvas id="c"></canvas>
+  <div class="orbs" id="orbs"></div>
+  <div class="stats" id="stats"></div>
+  <div class="pause" id="pause">
+    <h2>A Boundless City</h2>
+    <span style="color:#f00; font-weight: bold;">Red clusters</span> give speed boost and 1 <span class="coin">coin</span>.<br/>
+    <span style="color:#0f0; font-weight: bold;">Green checkpoints</span> give 
+    20 seconds to time limit and +1 to <span class="coin">coin</span> multiplier.<br/>
+    <b>Space</b> toggles pause. <b>Q</b> toggles quality (specifically antialiasing). M toggles music. R restarts the game.<br/><br/>
+    <div class="upgrades" id="upgrades"></div>
+  </div>
+  <div class="pause" id="win"></div>
+</body>
+
+<script type="text/javascript" src="bundle.js"></script>
+
+</html>

@@ -1,0 +1,2032 @@
+  <html>
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" 
+  type="image/png" 
+  href="favicon.png">
+</head>
+<title>Glide</title>
+
+<style>
+  body {
+    margin: 0;
+    font-family: monospace;
+  }
+
+  canvas {
+    position: fixed;
+    display: block;
+    width: 100%;
+    height: 100%;
+    image-rendering: pixelated;
+  }
+
+  .stats{
+    font-family: 'Courier New', Courier, monospace;
+    position:fixed;
+    font-size: 18pt;
+    z-index: 10;
+    bottom:0px;
+    left:0px;
+    color: white;
+    width: 100%;  
+    text-align: center;
+    text-shadow: 2px 2px 1px black;
+  }
+
+  .orbs {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr 1fr;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 26pt;
+    position:fixed;
+    top:0px;
+    left:0px;
+    width: 100%;
+    text-align: center;
+    z-index: 10;
+    color: white;
+    text-shadow: 2px 2px 1px black;
+  }
+
+  .pause{
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 14pt;
+    position:fixed;
+    top:50px;
+    left:0px;
+    width: calc(100% - 100px);
+    color: white;
+    text-align: center;
+    z-index: 10;
+    background: rgba(0, 0, 0, 0.8);
+    padding: 0px;
+    margin: 50px;
+    visibility: hidden;
+    pointer-events: none;
+    padding: 10px;
+  }
+
+  .pause > h2{
+    color:rgba(0, 255, 100, 1);
+    text-shadow: 1px 1px 1px black;
+  }
+
+  .upgrades{
+    display: grid;
+    grid-template-columns: 100px 100px 100px auto;    
+  }
+
+  .upgrades > div{
+    margin: 5px;
+  }
+
+  .coin{
+    color:yellow;
+    font-weight: bold;
+  }
+
+  button{
+    pointer-events: all;
+    background: black;
+    border: solid 1px #888;
+    cursor:pointer;
+    color:white;
+  }  
+
+  button:hover{
+    background: #333;
+  }
+
+  button:disabled{
+    background: none;
+    cursor: not-allowed;
+    opacity: 0.5;
+    border: solid 1px #333;
+  }      
+
+</style>
+</head>
+
+<body>
+  <canvas id="c"></canvas>
+  <div class="orbs" id="orbs"></div>
+  <div class="stats" id="stats"></div>
+  <div class="pause" id="pause">
+    <h2>A Boundless City</h2>
+    <span style="color:#f00; font-weight: bold;">Red clusters</span> give speed boost and 1 <span class="coin">coin</span>.<br/>
+    <span style="color:#0f0; font-weight: bold;">Green checkpoints</span> give 
+    20 seconds to time limit and +1 to <span class="coin">coin</span> multiplier.<br/>
+    <b>Space</b> toggles pause. <b>Q</b> toggles quality (specifically antialiasing). M toggles music. R restarts the game.<br/><br/>
+    <div class="upgrades" id="upgrades"></div>
+  </div>
+  <div class="pause" id="win"></div>
+</body><script id="city-f.glsl" type="glsl">#version 300 es
+precision highp float;
+precision highp int;
+
+const int BASE = 1;
+const int BILLBOARD = 2;
+const int STAR = 4;
+const int CHECKPOINT = 8;
+
+const float PI = 3.141592653589793;
+const float PI2 = 2. * PI;
+const float radToDeg = 90. / PI;
+
+uniform float u_time;
+uniform float u_musicTime;
+uniform sampler2D u_text;
+
+in vec2 v_uv;
+in vec3 v_position;
+flat in float v_cubeID;
+flat in int v_side;
+flat in int v_flag;
+flat in vec4 v_color;
+flat in vec2 v_windows;
+flat in vec2 v_windowSize;
+flat in vec2 v_windowMargin;
+flat in vec3 v_slot;
+
+vec4 normal;
+
+layout(location=0) out vec4 outEverything;
+
+float rand(float n){return fract(sin(n) * 43758.5453123);}
+
+float rand2(vec2 n) { 
+	return fract(sin(dot(n, vec2(12.9898, 4.1414))) * 43758.5453);
+}
+
+vec2 upolar(vec2 uv){
+  return vec2(cos(uv.x * PI2), sin(uv.y * PI2)) * 0.5 + 0.5;
+}
+
+vec2 polar(vec2 uv){
+  float l = distance(uv, vec2(0.5));
+  uv = uv *2. - 1.;
+  float a = atan(uv.x, uv.y);
+  return vec2(cos(a) * l, sin(a) * l) * 0.5 + 0.5;
+}
+
+vec2 scaleUV(vec2 uv, float variant){
+  return uv * vec2(rand(variant + 1.)+0.5, rand(variant + 2.)+0.5);
+}
+
+bool animationSinus(vec2 uv, float time, float variant){
+  return fract(sin(uv.x * 13.)/sin(uv.y * 11.) * (.5 + rand(variant * 300.)) + 0.1 * time * (1. + variant)) > variant + 0.1;
+}
+
+bool animationCircles(vec2 uv, float time, float variant){
+  return fract(sin(uv.x * 45.) * cos(uv.y *53. + variant * sin(time)) + time) * 0.8 > variant;
+}
+
+bool animationBars(vec2 uv, float time, float variant){
+  return ((rand(floor(10. * (variant + uv.x - sin(time*0.1))))*.5 + .4 - uv.y) * (1.5 + sin(time *0.1) * rand(variant)) > variant)
+    || fract(uv.x * 200.) > fract(uv.y * 200.) * 5.;
+}
+
+bool animationGridscape(vec2 uv, float time, float variant){
+  float d = tan(uv.y + 0.3);
+  return mod((uv.x - 0.5) * d,0.2)<0.01 || mod(d + time*0.5,0.2)<0.01;
+}
+
+bool animation(vec2 uv, float time, float variant){
+  bool down = rand(variant*71.) > 0.5;
+  if(uv.y < 0.15 && down || uv.y > 0.85 && !down )
+    return 
+      (texture(u_text, vec2( uv.x*0.7 + u_time*0.4, -uv.y*1.11 + (down?-0.003:0.03) + floor(variant*8.) * 0.125)).r > 0.8) 
+      != (rand(variant*51.) > 0.6);
+
+  uv = scaleUV(uv, v_cubeID);
+
+  int v = int(floor(rand(variant * 976.) * 4.));
+  switch(v){
+    case 0:
+      return animationSinus(uv, time, variant);
+    case 1:
+      return animationCircles(uv, time, variant);
+    case 2:
+      return animationBars(uv, time, variant);
+    default:
+      return animationGridscape(uv, time, variant);
+  }
+}
+
+void drawBillboard(){
+  vec2 d2 = abs(v_uv - 0.5);
+  float d = max(d2.x, d2.y);
+  bool lit = 
+    d>0.48 ? true:
+    d<0.48 && d>0.46 ? false:
+    animation(v_uv, u_time, rand(v_cubeID * 123. + float(v_side)));
+  normal.a = lit?1.:0.;
+}
+
+void drawWindows(){
+
+  if(v_windows == vec2(0.))
+    return;
+
+  vec2 r = .5 - v_windowMargin;
+  vec2 d = abs(v_uv - 0.5);
+
+  if((v_flag & BASE) != 0){
+    d.y -= v_windowMargin.y;
+  }
+
+  bool window = all(lessThan(d, r));
+
+  vec2 wuv;
+  float windowness = 1.;
+
+  if(window){
+    wuv = (v_uv - v_windowMargin) / (r * 2.);
+    vec2 uv2 = mod(wuv, 1. / v_windows) * v_windows;
+    vec2 wr = v_windowSize / 2.;
+    vec2 wd = abs(uv2 - 0.5);
+    vec2 dif = wr-wd;
+    windowness = min(min(dif.x, dif.y)*50., 1.);
+    window = v_side>=2 && windowness >= 0.;    
+  }
+
+  if(window){
+    vec2 windowId = floor(wuv * v_windows);
+    bool lit = v_windows == vec2(1.) || fract(rand2(windowId*0.01 + v_cubeID * 101. + float(v_side) * 0.13) * (u_time / 1000. + 1.)) > 0.3;
+    if(!lit)
+      window = false;
+  }
+  
+  normal.a = (window?windowness:0.) * (0.8 + sin(u_musicTime/0.35) * 0.1);
+}
+
+void main() {
+
+  if((v_flag & (STAR | CHECKPOINT)) != 0){
+    if((v_flag & STAR) != 0){
+      outEverything.r = 1.;
+      return;
+    }
+    vec2 b = abs(v_uv - 0.5);
+    outEverything = max(b.x, b.y)>0.47?vec4(0.,0.,0.,1.):vec4(0., 1., 0., 0.);
+    return;
+  }
+
+
+  if(!gl_FrontFacing){
+    outEverything.b = 1.;
+    return;  
+  }
+
+  if((v_flag & BILLBOARD) != 0)
+    drawBillboard();
+  else
+    drawWindows();  
+
+  outEverything.a = normal.a;
+
+}
+
+  //if(window)
+    //normal = normalize(normal + rand2(floor(wuv * v_windows)) * .03);
+  /*else
+    normal = normalize(normal + rand2(floor(v_uv * 100.))*.1);*/
+
+  //vec3 color = window?(v_color.rgb + vec3(0., 0.3, 0.5)) * 0.04:v_color.rgb*0.5;
+
+  //outColor = vec4(color, v_color.a);
+
+
+  //if(length(v_uv+vec2(0.5)) > 1.5){
+  /*if(sin(v_uv.y * 100.) + sin(v_uv.x * 100.) > .0){
+    discard;
+    return;
+  }*/  
+
+  //normal.xyz = v_normal;
+  //drawUV();
+  
+  //outEverything.xyz = normal.xyz * (gl_FrontFacing?.5:-.5) + .5;  
+  //outEverything.a = normal.a;
+
+
+  //outPosition = v_position;
+  
+  //outColor = vec4(v_uv.xy, 0., 1.);
+  
+  //gl_FragDepth = 0.99;
+
+
+/*void drawCog(){
+  vec2 dc = v_uv - vec2(0.5);
+  float a = degrees(atan(dc.x, dc.y));
+
+  outColor = gl_FrontFacing?v_color:v_color.gbra;
+
+  if(length(dc) < (mod(a, 60.)<30.?0.3:0.4)){    
+    outColor.xyz = outColor.xyz * 2.;
+  } else {
+    outColor.xy = v_uv;
+  }
+}*/
+
+/*void drawUV(){
+  outColor = vec4(v_uv, float(v_cubeID) / 1e10, v_color.a);
+}*/
+</script>
+<script id="city-v copy.glsl" type="glsl">#version 300 es
+precision highp float;
+precision highp int;
+precision mediump sampler3D;
+
+//const vec3 norm[6] = vec3[](vec3(1,0,0), vec3(-1,0,0), vec3(0,1,0), vec3(0,-1,0), vec3(0,0,1), vec3(0,0,-1));
+const vec3 norm[6] = vec3[](vec3(0,0,-1), vec3(0,0,1), vec3(0,-1,0), vec3(0,1,0), vec3(-1,0,0), vec3(1,0,0));
+const vec2 uv[6] = vec2[](vec2(0,0), vec2(0,1), vec2(1,1), vec2(0,0), vec2(1,1) ,vec2(1,0));
+const vec3 quad[6] = vec3[](vec3(-1, -1, 0), vec3(-1, 1, 0), vec3(1, 1, 0), vec3(-1, -1, 0), vec3(1, 1, 0), vec3(1, -1, 0));
+const vec2 kernel[4] = vec2[](vec2(1,0), vec2(-1,0), vec2(0,1), vec2(0,-1));
+const uint u255 = uint(255);
+
+const int BELOW = 0;
+const int ABOVE = 1;
+const int FURTHER = 2;
+const int CLOSER = 3;
+const int LEFT = 4;
+const int RIGHT = 5;
+
+const int BASE = 1;
+const int BILLBOARD = 2;
+const int STAR = 4;
+const int CHECKPOINT = 8;
+
+uniform mat4 u_worldViewProjection;
+uniform float u_time;
+uniform vec3 u_origin;
+uniform vec3 u_eye;
+uniform vec3 u_citySize;
+uniform vec3 u_checkpoint;
+uniform float u_blockSize;
+uniform float u_a;
+uniform float u_b;
+uniform int[100] u_collected;
+
+out vec2 v_uv;
+out vec3 v_position;
+flat out int v_flag;
+flat out int v_side;
+flat out float v_cubeID;
+flat out vec4 v_color;
+//flat out vec3 v_normal;
+flat out vec2 v_windows;
+flat out vec2 v_windowSize;
+flat out vec2 v_windowMargin;
+flat out vec3 v_slot;
+
+vec3 corner;
+vec3 speed;
+float columnID;
+bool isElevator;
+
+float rand(float n){return fract(sin(n + 0.5) * 43758.5453123);}
+
+float rand2(vec2 v) { 
+	return fract(sin(dot(v, vec2(12.9898, 4.1414))) * 43758.5453);
+}
+
+float rand3(vec3 v){
+  return rand2(v.xy + v.yz * 21.);
+}
+
+bool bit(int n, int b){
+  return floor(mod(float(n) / pow(2., float(b)), 2.)) == 1.;
+} 
+
+bool collected(int b){
+  return bit(u_collected[b/16], int(mod(float(b),16.)));
+}
+
+float slotCubeId(vec3 slot){
+  return rand3(slot * 3.142);
+}
+
+int hashAt(vec3 at){
+  vec3 slot = round(at / u_blockSize);
+  float cube = slotCubeId(slot);
+  return int(floor(cube * 1000.));
+}
+
+/*float snoise(vec3 v){ 
+  return texture(u_noise, v).r;
+}*/
+
+vec3 randVec3(float n){
+  return vec3(rand(n), rand(n+0.1), rand(n + 0.2));
+}
+
+mat4 rotationX( in float angle ) {
+	return mat4(	1.0,		0,			0,			0,
+			 		0, 	cos(angle),	-sin(angle),		0,
+					0, 	sin(angle),	 cos(angle),		0,
+					0, 			0,			  0, 		1);
+}
+
+mat4 rotationY( in float angle ) {
+	return mat4(	cos(angle),		0,		sin(angle),	0,
+			 				0,		1.0,			 0,	0,
+					-sin(angle),	0,		cos(angle),	0,
+							0, 		0,				0,	1);
+}
+
+mat4 rotationZ( in float angle ) {
+	return mat4(	cos(angle),		-sin(angle),	0,	0,
+			 		sin(angle),		cos(angle),		0,	0,
+							0,				0,		1,	0,
+							0,				0,		0,	1);
+}
+
+bool isPillar(vec3 slot){
+  return mod(slot.x, 6.) == 0. && mod(slot.y, 6.) == 0.;
+}
+
+bool hasBlockIn(vec3 slot){
+  return isPillar(slot) || rand3(slot) > 0.92;
+}
+
+bool hasStarIn(vec3 slot){
+  return mod(slot, 2.) == vec3(1., 0., 1.) && !isPillar(slot) && rand3(slot) < 0.2;
+}
+
+vec3 hasSpeed(vec3 slot){
+  if(isElevator){
+    return vec3(0., 0., (floor(rand(slot.z) * 4.) - 1.5) * 20.);
+  } else {
+    vec3 smod = mod(slot, 2.);
+    vec3 dir = 
+      smod.xy==vec2(0.)?vec3(0., 0., 1.)
+      :smod.yz==vec2(1.)?vec3(1., 0., 0.)
+      :smod.xz==vec2(1., 0.)?vec3(0., 1., 0.)
+      :vec3(0.);
+
+    float laneRnd = rand3(slot * (dir - 1.) * 0.301) * 1000.;
+    if(laneRnd<100.){
+      return (laneRnd - 50.) * dir * (dir.z == 0.?3.:.5);
+    } else
+      return vec3(0.);
+  }
+}
+
+void makeCar(){
+  if(corner.z >0.)
+    corner.xy *= 0.5;
+  corner *= (vec3(1.) + abs(sign(speed)) * 2.) * 0.2;
+  corner.z *= 0.5;
+  corner += vec3(rand(v_cubeID * 19.), rand(v_cubeID * 29.), rand(v_cubeID * 39.)) - 0.5;
+  //v_windows = vec2(1.);
+}
+
+void makeBase(){
+  float radius = 0.5 + 1. * min(0.6, rand(v_cubeID*142.));
+  corner.xy *= radius;
+  corner.z *= corner.z<0.?1.:-0.25 - 0.2 * rand(v_cubeID*243.);
+  if(radius < 1.){
+    v_flag = v_flag | BASE;
+    v_windows = floor(v_windows / 2.);
+    v_windowMargin = vec2(.3, 1.);
+  } else {
+    v_windows = vec2(0.);
+  }
+}
+
+void makeRoof(){
+  corner.xy *= corner.z<0.?1.:max(0., 0.3 - 0.5 * rand(v_cubeID*142.));
+  corner.z *= corner.z<0.?1.:-0.1 - 0.4 * rand(v_cubeID*243.);
+  //normal.z -= .5;
+  
+  if(rand(v_cubeID*144.) < 0.5){
+    v_windows *= 0.;
+  } else {
+    v_windows.x = floor(v_windows.x / 2.);
+    v_windowMargin.x = 0.3;
+  }
+}
+
+void makeRoof2(){
+  if(corner.z>0.){
+    if(rand(v_cubeID*253.) > 0.5){
+      corner.x = 0.;
+    } else {
+      corner.y = 0.;
+    }
+  }
+  corner.z *= corner.z<0.?1.:0. - 0.3 * rand(v_cubeID*243.);
+  //normal.z -= .5;
+}
+
+
+void makeSlope(){
+  if(corner.z < 0.)
+    return;
+  int slopeDir = int(rand(v_cubeID*253.) * 4.);  
+  float slope = -1. + 1.8 * rand(v_cubeID*253.);
+  if(dot(kernel[slopeDir], corner.xy)>0.){
+    corner.z = -1.;
+    v_windows *= 0.;
+  } else {
+    corner.z = slope;
+    if(slope < 0.)
+      v_windows *= 0.;
+  }
+}
+
+void makeConnector(){
+  corner.xy *= 0.2 + 0.2 * rand(columnID + 19.);
+  if(rand(columnID + 21.) > 0.7)
+    corner = (rotationZ(radians(45.)) * vec4(corner, 1.)).xyz;
+  //v_windows.x = floor(v_windows.x*0.7);      
+  //v_windows *= 0.;
+}
+
+
+void makeAttachment(){
+  int attachmentKind = int(rand(v_cubeID * 341.) * 4.);
+  switch (attachmentKind){
+    case 0:
+      makeRoof();
+      break;
+    case 1:
+      makeRoof2();
+      break;
+    case 2:
+      makeSlope();
+      break;
+    default:
+      makeBase();
+      break;
+  }
+}
+
+void main() {
+  int sideID = gl_VertexID % 36 / 6;
+  int cubeOrder = gl_VertexID / 36;
+
+  int cw = int(u_citySize[0]);
+  int cd = int(u_citySize[1]);
+  int ch = int(u_citySize[2]);
+
+  vec3 slot = vec3(cubeOrder % cw, cubeOrder / cw % cd, cubeOrder / cw / cd % ch) + u_origin;
+
+  bool isCheckpoint = u_checkpoint == slot;
+
+  speed = hasSpeed(slot);
+
+  bool moving = speed != vec3(0.);
+  bool isLane = speed.xy != vec2(0.);
+
+  vec3 shift;
+  if(isElevator){
+    shift = mod(speed * u_time, u_blockSize * u_citySize);    
+  } else {
+    shift = speed * u_time;
+    slot = slot - floor(shift / u_blockSize);
+  }
+
+  v_slot = slot;
+
+  columnID = rand2(slot.xy);
+
+  v_cubeID = slotCubeId(slot);
+
+  bool isBlock = hasBlockIn(slot);  
+  
+  bool blocksNearby[6];
+
+  bvec3 connector;
+
+  if(!isElevator && !isBlock){  
+    bool testHorCon = !moving && rand(v_cubeID * 512.) > 0.5;
+
+    if(testHorCon)
+      blocksNearby = bool[](
+        hasBlockIn(slot + norm[0]),
+        hasBlockIn(slot + norm[1]),
+        hasBlockIn(slot + norm[2]),
+        hasBlockIn(slot + norm[3]),
+        hasBlockIn(slot + norm[4]),
+        hasBlockIn(slot + norm[5])
+        );
+    else {
+      blocksNearby[0] = hasBlockIn(slot + norm[0]);
+      blocksNearby[1] = hasBlockIn(slot + norm[1]);
+    }
+    
+    connector = bvec3(    
+      blocksNearby[LEFT] && blocksNearby[RIGHT],
+      blocksNearby[FURTHER] && blocksNearby[CLOSER],
+      blocksNearby[BELOW] && blocksNearby[ABOVE]
+    );
+
+    if(!isBlock && !blocksNearby[BELOW] && !blocksNearby[ABOVE] && !any(connector) && !isLane){
+      gl_Position = vec4(0.);
+      return;
+    }  
+  }
+
+  corner = quad[gl_VertexID % 6];
+  corner.z = -1.;
+  corner = sideID%2==0?corner:-corner.yxz;
+  corner = sideID<2?corner:sideID<4?corner.yzx:corner.zxy;  
+  
+  v_side = sideID;
+
+  //v_color = vec4(rand2(slot.xy + vec2(0.223), rand2(slot.xy + vec2(0.224)), rand2(slot.xy + vec2(0.225)), 1.);  
+
+  v_windows = floor(vec2(
+    rand(columnID + 13.) * 10. + 5., 
+    rand(columnID + 14.) * 10. + 5.
+  ));
+
+  v_windowSize = vec2(rand(columnID + 15.), rand(columnID + 16.)) * 0.6 + 0.4;
+  v_windowMargin = max(vec2(rand(columnID + 17.) * 0.25, rand(columnID + 18.) * 0.15) - 0.05, 0.);
+
+  if(isCheckpoint){
+    v_flag = v_flag | CHECKPOINT;
+    corner.y *= vec2(0.2, 0.6, 0.4);
+    corner = (rotationZ(u_time) * vec4(corner, 1.)).xyz;
+  } else if(hasStarIn(slot)){
+    float r = v_cubeID + float(gl_VertexID % 36) + 11.;
+    int hash = hashAt(slot * u_blockSize);
+    if(collected(hash)){
+      return;
+    }
+    corner = vec3(sin(rand(r)*10. + u_time), sin(rand(r + 2.)*10. + u_time), sin(rand(r + 3.)*10. + u_time))*0.2;
+    corner *= max(1., 100. / distance(slot * u_blockSize, u_eye));
+    v_flag = v_flag | STAR;
+  } else if(isElevator){
+    v_uv.xy = corner.xz * 0.4 + 0.45;
+    corner *= 0.1;
+    corner.x += speed.z / 50.;
+    corner.y = corner.y<0.?0.8:1.;
+    corner.z *= 2.;
+    v_windows = vec2(1.);
+    v_windowMargin = vec2(0.);
+  } else if(isBlock){
+    if(isLane){
+      corner *= 0.5;
+      v_windows *= rand(v_cubeID * 65.) * 0.3 + 0.4;
+    }
+    if(v_side >=2 && rand(v_cubeID * 607. + float(v_side)) < 0.06)
+      v_flag = v_flag | BILLBOARD;
+  } else {
+    if(isLane){
+      makeCar();
+    } else if(any(connector)){
+      makeConnector();
+      
+      if(connector[2]){
+        v_windows.x = 1.;
+        v_windowMargin.x = 0.4;
+      } else {
+        v_windows.y = 1.;
+        v_windowMargin.y = 0.4;        
+        if(connector[0]){
+          corner.xyz = corner.zxy;
+        } else if(connector[1]){
+          corner.xyz = corner.yzx;
+        }
+      }
+    } else if(blocksNearby[BELOW] && hasSpeed(slot + norm[BELOW]) == vec3(0.)){
+      makeAttachment();
+    } else if(blocksNearby[ABOVE] && hasSpeed(slot + norm[ABOVE]) == vec3(0.)){
+      corner.z *= -1.;
+      makeAttachment();
+      corner.z *= -1.;
+    } else {
+      return;
+    }
+  }
+
+  if(!isElevator){
+    v_uv.x = ((sideID==2 || sideID==3)?corner.x:-corner.y)*((sideID==3 || sideID==5)?-1.:1.) * 0.5 + 0.5;  
+    v_uv.y = ((sideID==0 || sideID==1)?corner.y:corner.z) * 0.5 + 0.5;
+  }
+
+  vec2 edges0 = vec2(rand(slot.x), rand(slot.y)) - 1.;
+  vec2 edges1 = vec2(rand(slot.x+1.), rand(slot.y+1.)) + 1.;
+  
+  vec2 corner01 = corner.xy * 0.5 + 0.5;
+  corner.xy = edges0 * (1. - corner01) + edges1 * corner01;
+
+  corner *= u_blockSize;
+  corner *= 0.99999;
+  vec3 position = corner * 0.5;
+  position += slot * u_blockSize + shift;  
+  v_position = position;
+  gl_Position = u_worldViewProjection * vec4(position, 1.);  
+}
+
+    //corner = (rotationZ(radians((corner.z>0.) != (mod(slot.z, 2.) == 0.)?5.:-5.)) * vec4(corner, 1.)).xyz;
+
+  //(vec2(corner.x<0.?rand(slot.x):rand(slot.x + 1.), corner.y<0.?rand(slot.y):rand(slot.y + 1.)) - 0.5) * 1.5;
+
+  //corner = (rotation * vec4(corner, 1.)).xyz;
+  //corner *= rand(float(cubeID*3)+0.2) * 2.;
+
+  //position += vec3(cubeID%10, cubeID/10%10, cubeID/100%10) * 100.;
+  
+  //position += randVec3(float(cubeID)) * vec3(2., 2., 0.5) * 3000. + vec3(100, 100, -500.);
+
+  //v_normal = vec3(0., -1., 0.);
+  //v_color = vec4(v_normal + vec3(1.), 1.);
+
+  //v_normal = vec3(0.);
+
+  //v_normal = vec3(0.,0.,1.);
+  
+  //vec4 v_position = u_worldViewProjection * position;
+  //v_color = vec4(float((color>>16)&u255)/255., float((color>>8)&u255)/255., float(color&u255)/255., 1.0);
+  //gl_Position = position;
+  //gl_Position = v_position;
+</script>
+<script id="city-v.glsl" type="glsl">#version 300 es
+precision highp float;
+precision highp int;
+precision mediump sampler3D;
+
+//const vec3 norm[6] = vec3[](vec3(1,0,0), vec3(-1,0,0), vec3(0,1,0), vec3(0,-1,0), vec3(0,0,1), vec3(0,0,-1));
+const vec3 norm[6] = vec3[](vec3(0,0,-1), vec3(0,0,1), vec3(0,-1,0), vec3(0,1,0), vec3(-1,0,0), vec3(1,0,0));
+const vec2 uv[6] = vec2[](vec2(0,0), vec2(0,1), vec2(1,1), vec2(0,0), vec2(1,1) ,vec2(1,0));
+const vec3 quad[6] = vec3[](vec3(-1, -1, 0), vec3(-1, 1, 0), vec3(1, 1, 0), vec3(-1, -1, 0), vec3(1, 1, 0), vec3(1, -1, 0));
+const vec2 kernel[4] = vec2[](vec2(1,0), vec2(-1,0), vec2(0,1), vec2(0,-1));
+const uint u255 = uint(255);
+
+const int BELOW = 0;
+const int ABOVE = 1;
+const int FURTHER = 2;
+const int CLOSER = 3;
+const int LEFT = 4;
+const int RIGHT = 5;
+
+const int BASE = 1;
+const int BILLBOARD = 2;
+const int STAR = 4;
+const int CHECKPOINT = 8;
+
+uniform mat4 u_worldViewProjection;
+uniform mat4 u_inverseCamera;
+uniform float u_time;
+uniform vec3 u_origin;
+uniform vec3 u_eye;
+uniform vec3 u_citySize;
+uniform vec3 u_checkpoint;
+uniform vec3 u_previousCheckpoint;
+uniform float u_blockSize;
+uniform float u_a;
+uniform float u_b;
+uniform int[100] u_collected;
+
+out vec2 v_uv;
+out vec3 v_position;
+flat out int v_flag;
+flat out int v_side;
+flat out float v_cubeID;
+flat out vec4 v_color;
+//flat out vec3 v_normal;
+flat out vec2 v_windows;
+flat out vec2 v_windowSize;
+flat out vec2 v_windowMargin;
+flat out vec3 v_slot;
+
+vec3 corner;
+vec3 speed;
+float columnID;
+bool isElevator;
+int sideID;
+int cubeOrder;
+
+float rand(float n){return fract(sin(n + 0.5) * 43758.5453123);}
+
+float rand2(vec2 v) { 
+	return fract(sin(dot(v, vec2(12.9898, 4.1414))) * 43758.5453);
+}
+
+float rand3(vec3 v){
+  return rand2(v.xy + v.yz * 21.);
+}
+
+bool bit(int n, int b){
+  return floor(mod(float(n) / pow(2., float(b)), 2.)) == 1.;
+} 
+
+bool collected(int b){
+  return bit(u_collected[b/16], int(mod(float(b),16.)));
+}
+
+float slotCubeId(vec3 slot){
+  return rand3(slot * 3.142);
+}
+
+int hashAt(vec3 at){
+  vec3 slot = round(at / u_blockSize);
+  float cube = slotCubeId(slot);
+  return int(floor(cube * 1000.));
+}
+
+/*float snoise(vec3 v){ 
+  return texture(u_noise, v).r;
+}*/
+
+vec3 randVec3(float n){
+  return vec3(rand(n), rand(n+0.1), rand(n + 0.2));
+}
+
+mat4 rotationX( in float angle ) {
+	return mat4(	1.0,		0,			0,			0,
+			 		0, 	cos(angle),	-sin(angle),		0,
+					0, 	sin(angle),	 cos(angle),		0,
+					0, 			0,			  0, 		1);
+}
+
+mat4 rotationY( in float angle ) {
+	return mat4(	cos(angle),		0,		sin(angle),	0,
+			 				0,		1.0,			 0,	0,
+					-sin(angle),	0,		cos(angle),	0,
+							0, 		0,				0,	1);
+}
+
+mat4 rotationZ( in float angle ) {
+	return mat4(	cos(angle),		-sin(angle),	0,	0,
+			 		sin(angle),		cos(angle),		0,	0,
+							0,				0,		1,	0,
+							0,				0,		0,	1);
+}
+
+vec2 uvFrom(vec3 corner){
+  return vec2(
+    ((sideID==2 || sideID==3)?corner.x:-corner.y)*((sideID==3 || sideID==5)?-1.:1.) * 0.5 + 0.5,
+    ((sideID==0 || sideID==1)?corner.y:corner.z) * 0.5 + 0.5
+  );
+}
+
+bool isPillar(vec3 slot){
+  return mod(slot.x, 6.) == 0. && mod(slot.y, 6.) == 0.;
+}
+
+bool hasBlockIn(vec3 slot){
+  return isPillar(slot) || (rand3(slot) > .99 - fract(slot.x/50.)*0.15);
+}
+
+bool hasStarIn(vec3 slot){
+  return mod(slot, 2.) == vec3(1., 0., 1.) && !isPillar(slot) && rand3(slot) < 0.3;
+}
+
+vec3 hasSpeed(vec3 slot){
+  if(isElevator){
+    return vec3(0., 0., (floor(rand(slot.z) * 4.) - 1.5) * 20.);
+  } else {
+    vec3 smod = mod(slot, 2.);
+    vec3 dir = 
+      smod.xy==vec2(0.)?vec3(0., 0., 1.)
+      :smod.yz==vec2(1.)?vec3(1., 0., 0.)
+      :smod.xz==vec2(1., 0.)?vec3(0., 1., 0.)
+      :vec3(0.);
+
+    float laneRnd = rand3(slot * (dir - 1.) * 0.231) * 1000.;
+    if(laneRnd<100.){
+      return (laneRnd - 50.) * dir * (dir.z == 0.?3.:.5);
+    } else
+      return vec3(0.);
+  }
+}
+
+void makeCar(){
+  if(corner.z >0.)
+    corner.xy *= 0.5;
+  corner *= (vec3(1.) + abs(sign(speed)) * 2.) * 0.2;
+  corner.z *= 0.5;
+  corner += vec3(rand(v_cubeID * 19.), rand(v_cubeID * 29.), rand(v_cubeID * 39.)) - 0.5;
+  //v_windows = vec2(1.);
+}
+
+void makeBase(){
+  float radius = 0.5 + 1. * min(0.6, rand(v_cubeID*142.));
+  corner.xy *= radius;
+  corner.z *= corner.z<0.?1.:-0.25 - 0.2 * rand(v_cubeID*243.);
+  if(radius < 1.){
+    v_flag = v_flag | BASE;
+    v_windows = floor(v_windows / 2.);
+    v_windowMargin = vec2(.3, 1.);
+  } else {
+    v_windows = vec2(0.);
+  }
+}
+
+void makeRoof(){
+  corner.xy *= corner.z<0.?1.:max(0., 0.3 - 0.5 * rand(v_cubeID*142.));
+  corner.z *= corner.z<0.?1.:-0.1 - 0.4 * rand(v_cubeID*243.);
+  //normal.z -= .5;
+  
+  if(rand(v_cubeID*144.) < 0.5){
+    v_windows *= 0.;
+  } else {
+    v_windows.x = floor(v_windows.x / 2.);
+    v_windowMargin.x = 0.3;
+  }
+}
+
+void makeRoof2(){
+  if(corner.z>0.){
+    if(rand(v_cubeID*253.) > 0.5){
+      corner.x = 0.;
+    } else {
+      corner.y = 0.;
+    }
+  }
+  corner.z *= corner.z<0.?1.:0. - 0.3 * rand(v_cubeID*243.);
+  //normal.z -= .5;
+}
+
+
+void makeSlope(){
+  if(corner.z < 0.)
+    return;
+  int slopeDir = int(rand(v_cubeID*253.) * 4.);  
+  float slope = -1. + 1.8 * rand(v_cubeID*253.);
+  if(dot(kernel[slopeDir], corner.xy)>0.){
+    corner.z = -1.;
+    v_windows *= 0.;
+  } else {
+    corner.z = slope;
+    if(slope < 0.)
+      v_windows *= 0.;
+  }
+}
+
+void makeConnector(){
+  corner.xy *= 0.2 + 0.2 * rand(columnID + 19.);
+  if(rand(columnID + 21.) > 0.7)
+    corner = (rotationZ(radians(45.)) * vec4(corner, 1.)).xyz;
+  //v_windows.x = floor(v_windows.x*0.7);      
+  //v_windows *= 0.;
+}
+
+
+void makeAttachment(){
+  int attachmentKind = int(rand(v_cubeID * 341.) * 4.);
+  switch (attachmentKind){
+    case 0:
+      makeRoof();
+      break;
+    case 1:
+      makeRoof2();
+      break;
+    case 2:
+      makeSlope();
+      break;
+    default:
+      makeBase();
+      break;
+  }
+}
+
+void main() {
+  cubeOrder = gl_VertexID / 36;
+
+  sideID = gl_VertexID % 36 / 6;
+
+  if(cubeOrder == 0){
+    vec3 displacement = u_checkpoint * u_blockSize - u_eye;
+    vec3 position = normalize(displacement) * 10. + u_eye;
+    vec4 cam = u_inverseCamera * vec4(position, 1.);
+    if(cam.z < -length(cam.xy)){
+      gl_Position = u_worldViewProjection * vec4(position, 1.);      
+      gl_Position.xy = clamp(gl_Position.xy, -gl_Position.w*0.95, gl_Position.w*0.95);
+    } else {
+      float l = max(abs(cam.x), abs(cam.y)) / 9.5;
+      gl_Position = vec4(cam.x / l, cam.y / l, 0.3, 10.);
+    }
+    v_uv = vec2(0.5);
+    v_flag = CHECKPOINT;
+    gl_Position.xy += vec2[](vec2(0., -.2), vec2(0.2, 0.4), vec2(-0.2, 0.4))[gl_VertexID%3] * max(0.5, (1500. / (1000. + length(displacement))));
+    gl_Position.y += sin(u_time * 5.) * 0.1;
+    return;
+  }
+
+  int cw = int(u_citySize[0]);
+  int cd = int(u_citySize[1]);
+  int ch = int(u_citySize[2]);
+
+  vec3 slot = vec3(cubeOrder % cw, cubeOrder / cw % cd, cubeOrder / cw / cd % ch) + u_origin;
+
+  bool isNearPreviousCheckpoint = distance(slot, u_previousCheckpoint) <= 2.;
+  if(isNearPreviousCheckpoint)
+    return;
+
+  float distToCheckpoint = distance(slot, u_checkpoint);
+  
+  bool isCheckpoint = distToCheckpoint <= .1;
+
+  if(!isCheckpoint && distToCheckpoint <= 2.)
+    return;
+
+  speed = hasSpeed(slot);
+
+  bool moving = speed != vec3(0.);
+  bool isLane = speed.xy != vec2(0.);
+
+  vec3 shift;
+  if(isElevator){
+    shift = mod(speed * u_time, u_blockSize * u_citySize);    
+  } else {
+    shift = speed * u_time;
+    slot = slot - floor(shift / u_blockSize);
+  }
+
+  if(isCheckpoint)
+    shift *= 0.;
+
+  v_slot = slot;
+
+  columnID = rand2(slot.xy);
+
+  v_cubeID = slotCubeId(slot);
+
+  bool isBlock = hasBlockIn(slot);  
+  
+  bool blocksNearby[6];
+
+  bvec3 connector;
+
+  if(!isElevator && !isBlock && !isCheckpoint){  
+    bool testHorCon = !moving && rand(v_cubeID * 512.) > 0.5;
+
+    if(testHorCon)
+      blocksNearby = bool[](
+        hasBlockIn(slot + norm[0]),
+        hasBlockIn(slot + norm[1]),
+        hasBlockIn(slot + norm[2]),
+        hasBlockIn(slot + norm[3]),
+        hasBlockIn(slot + norm[4]),
+        hasBlockIn(slot + norm[5])
+        );
+    else {
+      blocksNearby[0] = hasBlockIn(slot + norm[0]);
+      blocksNearby[1] = hasBlockIn(slot + norm[1]);
+    }
+    
+    connector = bvec3(    
+      blocksNearby[LEFT] && blocksNearby[RIGHT],
+      blocksNearby[FURTHER] && blocksNearby[CLOSER],
+      blocksNearby[BELOW] && blocksNearby[ABOVE]
+    );
+
+    if(!isBlock && !blocksNearby[BELOW] && !blocksNearby[ABOVE] && !any(connector) && !isLane){
+      gl_Position = vec4(0.);
+      return;
+    }  
+  }
+
+  corner = quad[gl_VertexID % 6];
+  corner.z = -1.;
+  corner = sideID%2==0?corner:-corner.yxz;
+  corner = sideID<2?corner:sideID<4?corner.yzx:corner.zxy;  
+  
+  v_side = sideID;
+
+  //v_color = vec4(rand2(slot.xy + vec2(0.223), rand2(slot.xy + vec2(0.224)), rand2(slot.xy + vec2(0.225)), 1.);  
+
+  v_windows = floor(vec2(
+    rand(columnID + 13.) * 10. + 5., 
+    rand(columnID + 14.) * 10. + 5.
+  ));
+
+  v_windowSize = vec2(rand(columnID + 15.), rand(columnID + 16.)) * 0.6 + 0.4;
+  v_windowMargin = max(vec2(rand(columnID + 17.) * 0.25, rand(columnID + 18.) * 0.15) - 0.05, 0.);
+
+  if(isCheckpoint){
+    v_flag = v_flag | CHECKPOINT;
+    v_uv = uvFrom(corner);
+    corner *= vec3(0.2, 0.6, 0.4);
+    corner = (rotationZ(u_time) * vec4(corner, 1.)).xyz;
+  } else if(hasStarIn(slot)){
+    float r = v_cubeID + float(gl_VertexID % 36) + 11.;
+    int hash = hashAt(slot * u_blockSize);
+    if(collected(hash)){
+      return;
+    }
+    corner = vec3(sin(rand(r)*10. + u_time), sin(rand(r + 2.)*10. + u_time), sin(rand(r + 3.)*10. + u_time))*0.2;
+    corner *= max(1., 100. / distance(slot * u_blockSize, u_eye));
+    v_flag = v_flag | STAR;
+  } else if(isElevator){
+    v_uv.xy = corner.xz * 0.4 + 0.45;
+    corner *= 0.1;
+    corner.x += speed.z / 50.;
+    corner.y = corner.y<0.?0.8:1.;
+    corner.z *= 2.;
+    v_windows = vec2(1.);
+    v_windowMargin = vec2(0.);
+  } else if(isBlock){
+    if(isLane){
+      corner *= 0.5;
+      v_windows *= rand(v_cubeID * 65.) * 0.3 + 0.4;
+    }
+    if(v_side >=2 && rand(v_cubeID * 607. + float(v_side)) < 0.06)
+      v_flag = v_flag | BILLBOARD;
+  } else {
+    if(isLane){
+      makeCar();
+    } else if(any(connector)){
+      makeConnector();
+      
+      if(connector[2]){
+        v_windows.x = 1.;
+        v_windowMargin.x = 0.4;
+      } else {
+        v_windows.y = 1.;
+        v_windowMargin.y = 0.4;        
+        if(connector[0]){
+          corner.xyz = corner.zxy;
+        } else if(connector[1]){
+          corner.xyz = corner.yzx;
+        }
+      }
+    } else if(blocksNearby[BELOW] && hasSpeed(slot + norm[BELOW]) == vec3(0.)){
+      makeAttachment();
+    } else if(blocksNearby[ABOVE] && hasSpeed(slot + norm[ABOVE]) == vec3(0.)){
+      corner.z *= -1.;
+      makeAttachment();
+      corner.z *= -1.;
+    } else {
+      return;
+    }
+  }
+
+  
+  if(!isElevator && !isCheckpoint){
+    v_uv = uvFrom(corner);
+  }
+
+  if(!isCheckpoint){
+    vec2 edges0 = vec2(rand(slot.x), rand(slot.y)) - 1.;
+    vec2 edges1 = vec2(rand(slot.x+1.), rand(slot.y+1.)) + 1.;
+    
+    vec2 corner01 = corner.xy * 0.5 + 0.5;
+    corner.xy = edges0 * (1. - corner01) + edges1 * corner01;
+  }
+
+  corner *= u_blockSize * 0.99999;
+  vec3 position = corner * 0.5;
+  position += slot * u_blockSize + shift;  
+  v_position = position;
+  gl_Position = u_worldViewProjection * vec4(position, 1.);  
+}</script>
+<script id="geo-f.glsl" type="glsl">#version 300 es
+
+precision highp float;
+precision highp sampler3D;
+
+uniform float u_resolution;
+uniform float u_scale;
+uniform float u_time;
+
+uniform sampler3D u_noise;
+
+in vec4 v_position;
+in vec3 v_normal;
+in vec4 v_color;
+in vec2 v_uv;
+in vec3 v_texcoord; 
+
+layout(location=0) out vec4 outColor;
+layout(location=1) out vec4 outNormal;
+
+float rand(float n){return fract(sin(n) * 43758.5453123);}
+
+float snoise(vec3 v){ 
+  return texture(u_noise, v).r;
+}
+
+void main() {
+
+  float scale =  u_scale / u_resolution;
+
+  vec3 pos = v_texcoord / scale;
+
+  /*if(sin((pos.x*23153.) + (pos.y*21711.) + (pos.z*31893.)+0.1) > -0.9){
+    discard;
+    return;
+  }*/
+
+  if(gl_FrontFacing)
+    pos -= v_normal;
+
+  float d = 0.001;
+  vec3 ipos = vec3(floor(pos.x+d), floor(pos.y+d), floor(pos.z+d));
+  //ipos = pos;
+
+  ipos.z *= 1.5;
+
+  //float simplex = snoise((ipos + vec3(.5) - vec3(0., 0., u_time * 10.)) * scale * 0.04);
+
+  float simplex = snoise(ipos / 500. - vec3(0., 0., u_time * .1)) * scale;
+
+  if(sin(simplex * 20.) * 0.2 - ipos.z * scale * 0.002 < -0.){
+      discard;
+  } else {
+  //outColor = vec4(vec3(v_texcoord.z / u_scale), 1.);
+  outColor = vec4(v_texcoord.zxy / u_scale * 2. - .6, 1.);
+  outNormal = vec4(v_normal * 0.5 + 0.5, 1.);
+  //outNormal = vec4(0., 0., 1., 1.);
+  }    
+
+  
+}</script>
+<script id="lattice-v.glsl" type="glsl">#version 300 es
+precision highp float;
+
+const vec3 normals[6] = vec3[](vec3(1,0,0), vec3(-1,0,0), vec3(0,1,0), vec3(0,-1,0), vec3(0,0,1), vec3(0,0,-1));
+const vec2 uv[4] = vec2[](vec2(0,0), vec2(0,1), vec2(1,1), vec2(1,0));
+const vec3 fullScreenQuad[6] = vec3[](vec3(-1, -1, 0), vec3(1, -1, 0), vec3(-1, 1, 0), vec3(-1, 1, 0), vec3(1, -1, 0), vec3(1, 1, 0));
+const uint u255 = uint(255);
+
+const vec3 quad[6] = vec3[](vec3(0, 0, 0), vec3(1, 0, 0), vec3(0, 1, 0), vec3(1, 0, 0), vec3(1, 1, 0), vec3(0, 1, 0));
+
+struct Light{
+  vec3 pos;
+  vec4 color;
+};
+
+uniform Light u_light[1];
+
+uniform mat4 u_worldViewProjection;
+
+uniform vec4 u_lightColor;
+uniform mat4 u_world;
+uniform mat4 u_viewInverse;
+uniform mat4 u_worldInverseTranspose;
+uniform float u_time;
+uniform float u_resolution;
+uniform float u_scale;
+
+out vec4 v_position;
+out vec3 v_normal;
+out vec4 v_color;
+out vec2 v_uv;
+out vec3 v_texcoord; 
+
+void main() {  
+  float id = float(gl_VertexID);
+  vec3 tp = quad[int(mod(id, 6.))];
+  
+  float qId = floor(id / 6.);
+  float axisId = mod(qId, 3.);
+  float planeId = floor(qId / 3.0);
+
+  tp.z = planeId / u_resolution;
+
+  vec3 position = u_scale * mix(tp.zxy, mix(tp.yzx, tp.xyz, step(1.5, axisId)), step(0.5, axisId));
+  vec3 normal = normals[int(axisId)*2];
+
+  v_texcoord = position;
+
+  vec4 a_position = vec4(position, 1);
+  
+  v_normal = normalize((u_world * vec4(normal, 0)).xyz);
+  //v_normal = normal;
+  gl_Position = u_worldViewProjection * a_position;
+}
+</script>
+<script id="light-f.glsl" type="glsl">#version 300 es
+precision highp float;
+
+const vec2 kernel[4] = vec2[](vec2(1,0), vec2(-1,0), vec2(0,1), vec2(0,-1));
+#define SIN45 0.707107
+
+struct Light{
+  vec3 pos;
+  vec4 color;
+};
+
+uniform Light u_light[1];
+uniform vec4 u_ambient;
+uniform vec4 u_specular;
+uniform float u_shininess;
+uniform vec2 u_bufferSize;
+uniform vec3 u_eye;
+uniform vec3 u_toSun;
+uniform float u_near;
+uniform float u_far;
+uniform float u_a;
+uniform float u_b;
+uniform mat4 u_worldViewProjection;
+uniform mat4 u_inverseWorldViewProjection;
+uniform mat4 u_raycastProjection;
+
+uniform vec3 u_citySize;
+uniform float u_blockSize;
+
+const float c_bias = .04;
+const vec2 c_attenuation = vec2(1.);
+const float c_sampleRadius = .05;
+
+uniform sampler2D u_everything;
+uniform sampler2D u_depth;
+
+in vec2 v_uv;
+
+out vec4 outColor;
+
+float rand(vec2 co){
+    return fract(sin(dot(co ,vec2(12.9898,78.233))) * 43758.5453);
+}
+
+float rand2(vec2 v) { 
+	return fract(sin(dot(v, vec2(12.9898, 4.1414))) * 43758.5453);
+}
+
+float rand3(vec3 v){
+  return rand2(v.xy + v.yz * 21.);
+}
+
+vec3 everythingAt(vec2 at){
+  return normalize(texture(u_everything, at).xyz*2. - 1.);
+}
+
+float shinyAt(vec2 at){
+  return texture(u_everything, at).a;
+}
+
+vec3 positionAt(vec2 at){
+  float depth = texture(u_depth, at).r;
+  vec4 p1 = vec4(at*2. - 1., depth*2. - 1., 1.);
+  vec4 p2 = u_inverseWorldViewProjection * p1;
+  vec4 position = p2 / p2.w;
+  return position.xyz;
+}
+
+float depthAt(vec2 coord){
+  float fd = texture(u_depth, coord).r * 2. - 1.;
+  return 1. - u_b / (fd - u_a);
+}
+
+vec3 fogColor(vec3 ray){
+  return vec3(0.);
+}
+
+float slotCubeId(vec3 slot){
+  return rand3(slot * 3.142);
+}
+
+int hashAt(vec3 at){
+  vec3 slot = round(at / u_blockSize);
+  float cube = slotCubeId(slot);
+  return int(floor(cube * 1000.));
+}
+
+void main() {
+
+  if(gl_FragCoord.y<2. && gl_FragCoord.x<2.){
+    outColor = vec4(0.);
+    vec4 center = texture(u_everything, vec2(0.5));
+    
+    bool crashed = center.b!=0.;
+    bool starNearby = center.r!=0. && depthAt(vec2(0.5)) < 50.;
+
+    if(crashed)
+      outColor.b = 1.;
+    else if(starNearby)
+      outColor.r = float(hashAt(positionAt(vec2(0.5))));
+    return;
+  }
+
+  float depth = depthAt(v_uv);
+
+  vec4 everything = texture(u_everything, v_uv);
+  
+  vec4 litColor = vec4(everything.rgb + everything.a, 1.);
+
+  for(int i=0;i<4;i+=2){
+    vec2 at = v_uv + kernel[i] / u_bufferSize[i/2] * max(2., (600. / (300. + depth)));
+    float d = abs(depth - depthAt(at));
+    if(d > 10.){
+      litColor.xyz = vec3(10.); 
+      break;
+    }
+  }
+
+  if(everything.r > 0.){
+    litColor.rgb *= length(sin(v_uv.x * 1000.) + sin(v_uv.y * 1000.)) * 0.5;
+  }
+
+
+  litColor.xyz *= 1. - depth / 1500.;
+  outColor = litColor;
+
+}
+
+
+  //float depth = (depthAt(v_uv) - 0.996) * 100.;
+  //litColor.rgb *= depthAt(v_uv) / 5000.;
+
+  /*float occlusion = getTotalOcclusion(position, normal);
+  litColor -= occlusion * 10.;*/
+
+  //litColor.xyz = normal + 1.;
+
+
+  //outColor = vec4(vec3(position.z / 1000.), 1.);
+
+  /*vec3 bounds = u_blockSize * u_citySize * 0.8;
+  vec3 boundDepth3 = abs(ray * depth / bounds * 1.2);
+  float boundDepth = min(max(max(boundDepth3.x, boundDepth3.y), boundDepth3.z), 1.);*/
+
+  //float skyFog = (boundDepth<0.8)?0.:(boundDepth - 0.8) * 5.;
+
+  //float skyFog = (boundDepth<0.8)?0.:(boundDepth - 0.8) * 5.;
+
+  //outColor.xyz = outColor.xyz * (1. - skyFog) + fogColor(ray) * skyFog;
+
+  //outColor = diffuseColor;
+
+  //bool front = dot(normal, surfaceToView) > 0.2;
+  /*bool edge = false;
+
+  edge = dot(normal, surfaceToView) < 0.001;
+
+  if(edge){
+    litColor = vec4(litColor.xyz * .0, 1.);
+  }*/
+
+  //litColor = vec4(normal, 1.);
+
+
+  //vec3 surfaceToLight = normalize(u_light[0].pos/* - position*/);
+
+  /*vec3 surfaceToLight = u_toSun;
+  vec3 surfaceToView = normalize(u_eye - position);
+  vec3 halfVector = normalize(surfaceToLight + surfaceToView);
+  
+  float l = 0.5 * (dot(normal, surfaceToLight) + 1.);
+  float h = 0.5 * (dot(normal, halfVector) + 1.);*/
+
+  //bool black = length(diffuseColor.rgb)==0.;
+
+  
+  /*if((diffuseColor.rgb) != vec3(0.)){
+    color = 
+      u_light[0].color.xyz * (
+        diffuseColor.rgb * max(l, 0.) * u_light[0].color.a + 
+        diffuseColor.rgb * u_ambient.xyz * u_ambient.a  
+      );
+  }
+
+  if(shiny>0.){
+    //color = u_specular.rgb * (l > 0. ? pow(max(0., h), u_shininess) : 0.) * u_specular.a;
+    color += skyColor(reflect(-surfaceToView, normal)) * (l > 0. ? pow(max(0., h), u_shininess) : 0.) * u_specular.a * shiny;
+  }*/
+
+/*
+float getOcclusionPoint(vec3 position, vec3 normal, vec2 occluderXY) {
+    vec3 occluderPosition = positionAt(occluderXY);
+    vec3 positionVec = occluderPosition - position;
+    float intensity = max(dot(normal, normalize(positionVec)) - c_bias, 0.0);
+
+    float attenuation = 1.0 / (c_attenuation.x + c_attenuation.y * length(positionVec));
+    return intensity * attenuation;
+}
+
+float getTotalOcclusion(vec3 position, vec3 normal){
+  float occlusion = 0.0;
+  
+  float depth = (depthAt(v_uv) - u_near) / (u_far - u_near);
+
+  float kernelRadius = c_sampleRadius * (1.0 - depth);
+  vec2 rand = normalize(vec2(rand(position.xy), rand(position.xy*3.141)));
+
+  for (int i = 0; i < 4; ++i) {
+      vec2 k1 = reflect(kernel[i], rand);
+      vec2 k2 = vec2(k1.x * SIN45 - k1.y * SIN45, k1.x * SIN45 + k1.y * SIN45);
+      k1 *= kernelRadius;
+      k2 *= kernelRadius;
+      occlusion += getOcclusionPoint(position, normal, v_uv + k1);
+      occlusion += getOcclusionPoint(position, normal, v_uv + k2 * 0.75);
+      occlusion += getOcclusionPoint(position, normal, v_uv + k1 * .5);
+      occlusion += getOcclusionPoint(position, normal, v_uv + k2 * 0.25);
+  }
+  occlusion = clamp(occlusion / 8.0, 0.0, 1.0);  
+  return occlusion;
+}
+
+vec3 skyColor(vec3 ray){
+  vec3 color = (ray + 1.) * (dot(ray, u_toSun)>0.999?10.:1.);
+  float aVer = degrees(atan(ray.x, ray.y));
+  float aHor = degrees(atan(ray.z, length(ray.xy)));
+  color *= mod(aVer, 10.) < 0.1?1.5:1.;
+  color *= mod(aHor, 10.) < 0.1?1.5:1.;
+  color *= mod(aVer, 5.) < 0.1?1.5:1.;
+  color *= mod(aHor, 5.) < 0.1?1.5:1.;
+  color *= mod(aVer, .5) < 0.05?1.5:1.;
+  color *= mod(aHor, .5) < 0.05?1.5:1.;
+  return color;
+}
+
+*/</script>
+<script id="noise-f.glsl" type="glsl">#version 300 es
+precision highp float;
+
+uniform float u_resolution;
+uniform float u_side;
+
+in vec2 v_uv;
+
+out float outColor;
+
+vec4 permute(vec4 x){return mod(((x*34.0)+1.0)*x, 289.0);}
+vec4 taylorInvSqrt(vec4 r){return 1.79284291400159 - 0.85373472095314 * r;}
+
+float snoise(vec3 v){ 
+  const vec2  C = vec2(1.0/6.0, 1.0/3.0) ;
+  const vec4  D = vec4(0.0, 0.5, 1.0, 2.0);
+
+// First corner
+  vec3 i  = floor(v + dot(v, C.yyy) );
+  vec3 x0 =   v - i + dot(i, C.xxx) ;
+
+// Other corners
+  vec3 g = step(x0.yzx, x0.xyz);
+  vec3 l = 1.0 - g;
+  vec3 i1 = min( g.xyz, l.zxy );
+  vec3 i2 = max( g.xyz, l.zxy );
+
+  //  x0 = x0 - 0. + 0.0 * C 
+  vec3 x1 = x0 - i1 + 1.0 * C.xxx;
+  vec3 x2 = x0 - i2 + 2.0 * C.xxx;
+  vec3 x3 = x0 - 1. + 3.0 * C.xxx;
+
+// Permutations
+  i = mod(i, 289.0 ); 
+  vec4 p = permute( permute( permute( 
+             i.z + vec4(0.0, i1.z, i2.z, 1.0 ))
+           + i.y + vec4(0.0, i1.y, i2.y, 1.0 )) 
+           + i.x + vec4(0.0, i1.x, i2.x, 1.0 ));
+
+// Gradients
+// ( N*N points uniformly over a square, mapped onto an octahedron.)
+  float n_ = 1.0/7.0; // N=7
+  vec3  ns = n_ * D.wyz - D.xzx;
+
+  vec4 j = p - 49.0 * floor(p * ns.z *ns.z);  //  mod(p,N*N)
+
+  vec4 x_ = floor(j * ns.z);
+  vec4 y_ = floor(j - 7.0 * x_ );    // mod(j,N)
+
+  vec4 x = x_ *ns.x + ns.yyyy;
+  vec4 y = y_ *ns.x + ns.yyyy;
+  vec4 h = 1.0 - abs(x) - abs(y);
+
+  vec4 b0 = vec4( x.xy, y.xy );
+  vec4 b1 = vec4( x.zw, y.zw );
+
+  vec4 s0 = floor(b0)*2.0 + 1.0;
+  vec4 s1 = floor(b1)*2.0 + 1.0;
+  vec4 sh = -step(h, vec4(0.0));
+
+  vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy ;
+  vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww ;
+
+  vec3 p0 = vec3(a0.xy,h.x);
+  vec3 p1 = vec3(a0.zw,h.y);
+  vec3 p2 = vec3(a1.xy,h.z);
+  vec3 p3 = vec3(a1.zw,h.w);
+
+//Normalise gradients
+  vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2, p2), dot(p3,p3)));
+  p0 *= norm.x;
+  p1 *= norm.y;
+  p2 *= norm.z;
+  p3 *= norm.w;
+
+// Mix final noise value
+  vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+  m = m * m;
+  return 42.0 * dot( m*m, vec4( dot(p0,x0), dot(p1,x1), 
+                                dot(p2,x2), dot(p3,x3) ) );
+}
+
+vec3 vec2toVec3(vec2 v){
+  float col = floor(v.x * u_side);
+  float row = floor(v.y * u_side);
+  float n = col + row * u_side;
+  return vec3(
+      mod(n, u_resolution), 
+      mod(floor(n / u_resolution), u_resolution), 
+      floor(n / u_resolution / u_resolution));
+}
+
+void main() {
+  vec3 pos = vec2toVec3(v_uv);
+  
+  outColor = snoise(pos / u_resolution * 10.);
+  //outColor = pos.x / u_resolution;
+}</script>
+<script id="quad-v.glsl" type="glsl">#version 300 es
+precision highp float;
+
+in vec4 position;
+
+out vec4 v_position;
+out vec2 v_uv;
+
+void main() {
+  gl_Position = position;
+  v_uv = position.xy*0.5 + vec2(0.5);
+}</script>
+<script id="raymarch-f.glsl" type="glsl">#version 300 es
+
+precision highp float;
+precision mediump sampler3D;
+
+in vec2 v_texCoord; 
+
+uniform float u_resolution;
+uniform float u_scale;
+uniform float u_time;
+uniform float u_near;
+uniform float u_far;
+uniform mat4 u_worldViewProjection;
+uniform mat4 u_inverseWorldViewProjection;
+uniform mat4 u_raycastProjection;
+uniform vec3 u_eye;
+uniform vec3 u_toSun;
+uniform float u_orbRadius;
+uniform int[100] u_collected;
+
+uniform sampler3D u_noise;
+
+layout(location=0) out vec4 outColor;
+layout(location=1) out vec3 outNormal;
+
+//return distance(vec3(50., 0., 100.), pos) - 20.;
+
+const float maxRange = 3000.;
+const float orbChunkSize = 30.;
+const float maxHeight = 200.;
+const vec2 orbRange = vec2(100., 150.);
+
+bool bit(int n, int b){
+  return floor(mod(float(n) / pow(2., float(b)), 2.)) == 1.;
+} 
+
+bool collected(int b){
+  return bit(u_collected[b/16], int(mod(float(b),16.)));
+}
+
+vec3 permute(vec3 x) { return mod(((x*34.0)+1.0)*x, 289.0); }
+
+float snoise2d(vec2 v){
+  const vec4 C = vec4(0.211324865405187, 0.366025403784439,
+           -0.577350269189626, 0.024390243902439);
+  vec2 i  = floor(v + dot(v, C.yy) );
+  vec2 x0 = v -   i + dot(i, C.xx);
+  vec2 i1;
+  i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+  vec4 x12 = x0.xyxy + C.xxzz;
+  x12.xy -= i1;
+  i = mod(i, 289.0);
+  vec3 p = permute( permute( i.y + vec3(0.0, i1.y, 1.0 ))
+  + i.x + vec3(0.0, i1.x, 1.0 ));
+  vec3 m = max(0.5 - vec3(dot(x0,x0), dot(x12.xy,x12.xy),
+    dot(x12.zw,x12.zw)), 0.0);
+  m = m*m ;
+  m = m*m ;
+  vec3 x = 2.0 * fract(p * C.www) - 1.0;
+  vec3 h = abs(x) - 0.5;
+  vec3 ox = floor(x + 0.5);
+  vec3 a0 = x - ox;
+  m *= 1.79284291400159 - 0.85373472095314 * ( a0*a0 + h*h );
+  vec3 g;
+  g.x  = a0.x  * x0.x  + h.x  * x0.y;
+  g.yz = a0.yz * x12.xz + h.yz * x12.yw;
+  return 130.0 * dot(m, g);
+}
+
+float height(vec2 at){
+  return 200.;// - snoise2d(at * 0.001) * 50.;
+}
+
+
+float hash(vec2 p) { return fract(1e4 * sin(17.0 * p.x + p.y * 0.1) * (0.1 + abs(sin(p.y * 13.0 + p.x)))); }
+
+int posHash(vec2 p){
+  return int(floor(hash(p) * 1000.));
+}
+
+float rand(vec2 co){
+    return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453);
+}
+
+float snoise(vec3 v){ 
+  return texture(u_noise, v).r;
+}
+
+vec3 nearestOrb(vec3 pos){
+  vec2 chunk = round(pos.xy / orbChunkSize);
+  //vec2(floor(chunk.x), floor(chunk.y))
+  float h = rand(chunk) * (orbRange.y - orbRange.x) + orbRange.x;
+  return vec3(chunk * orbChunkSize, h);
+}
+
+float sdf(vec3 pos){
+  float scale = u_scale / u_resolution;
+  float simplex = snoise(pos * vec3(1. / 500., 1./ 500., 1. / 250.) + vec3(0., 0., - u_time * .005 * 0.));
+  float f = (sin(simplex * 5.) + pos.z * scale * 0.01) * 2.;
+  //f += snoise2d(pos.xy / 10.) * 0.1;
+  //f += sin(pos.x * 0.5) * 0.2 + sin(pos.y * 0.5) * 0.2;
+  f = max(f, pos.z - height(pos.xy));
+
+  if(pos.z < 200.){
+    vec3 orb = nearestOrb(pos);
+    float d = distance(orb, pos);
+    f = max(10. - d, f);
+
+    if(!collected(posHash(orb.xy))){
+      f = min(d - u_orbRadius, f);
+    }
+
+  }
+
+  return f;
+}
+
+const float normalDelta1 = 1.;
+const float normalDelta2 = 0.1;
+
+vec3 normalSdfDelta(vec3 pos, float delta){
+  float a = sdf(pos);
+  vec2 d = vec2(delta,0.);
+  float x = sdf(pos + d.xyy) - a;
+  float y = sdf(pos + d.yxy) - a;
+  float z = sdf(pos + d.yyx) - a;
+  return normalize(vec3(x,y,z));
+}
+
+/*vec3 normalSdf(vec3 pos){
+  return normalize(normalSdfDelta(pos, 1.) * 2. + normalSdfDelta(pos, .2));
+}*/
+
+vec3 normalSdf(vec3 pos){
+  return normalSdfDelta(pos, 1.);
+}
+
+float raycastDetailed(vec3 start, vec3 ray, int limit, out float nearestAngle){
+  float l = 1.;  
+  nearestAngle = 1000000.;
+
+  for(int i=0; i<limit; i++){
+    vec3 pos = start + ray*l;
+    
+    if(pos.z > maxHeight && ray.z >=0.)
+      return 1000.;
+
+    float v = sdf(pos);
+    
+    if(l > 1.){
+      nearestAngle = min(v / l, nearestAngle);
+    }
+
+    if(l>maxRange || v>1000.)
+      return 1000.;
+
+    if(v < 0.1){
+      return l;
+    } else {
+      //l += v * 1. * (1. + rand(ray.xy + vec2(l)));
+      l += v * 1.1;
+    }
+  }
+  return l;
+  //return 100000.;
+}
+
+float raycast(vec3 start, vec3 ray, int limit){
+  float nearestAngle;
+  return raycastDetailed(start, ray, limit, nearestAngle);
+}
+
+void main() {
+  if(gl_FragCoord.y<1. && gl_FragCoord.x<1.){
+    outColor = vec4(0.);
+    outNormal = vec3(0.);
+    vec3 orb = nearestOrb(u_eye);
+    
+    float orbDist = distance(u_eye, orb);
+    bool orbNearby = orbDist < 7. && (u_collected[posHash(orb.xy)] == 0);
+    bool crashed = sdf(u_eye) < 0.;
+
+    if(orbNearby)
+      outColor.g = float(posHash(orb.xy));
+    else if(crashed)
+      outColor.r = 1.;
+    return;
+  }
+
+  vec4 screenPos = vec4(v_texCoord.x * 2. - 1., v_texCoord.y * 2. - 1., 0., 1.);
+  vec3 ray = normalize((u_raycastProjection * screenPos).xyz);
+  float l = raycast(u_eye, ray, 300);
+  vec3 pos = u_eye + ray * l;
+
+  vec3 color = vec3(normalize(pos.xy / 1000.), 0.1);
+  vec3 orb = nearestOrb(pos);
+
+  if(l>=10000.)  {
+    color = vec3(0., 0., .0);
+    outNormal = vec3(0., 0., 1.); 
+  } else if(distance(pos, orb) <= u_orbRadius + 0.1){
+    //color = vec3(0., 5., 5.);
+    color = vec3(0.);
+    //color = normalize(normalSdf(pos / 15. + vec3(0., 0., -1000.))) * 10.; 
+    outNormal = normalSdf(pos);;
+  } else {
+
+    //color = sin(pos / 70.) + sin(pos.yzx / 70.) + vec3(1., 0., -1.);
+
+    color = normalize(normalSdf(pos / 10. + vec3(0., 0., -10000.)) + vec3(1.));
+
+    //color = normalize(snoise(pos));
+
+    //color = normalize(pos) * 5.;
+    //color += vec3(0.2, 0.2, -.2);
+    //color *= (10. + pow(l, 0.5)) / 10.;
+
+    //color = vec3(1., 1., 1.);
+
+    /*float gridWidth = 0.001;
+    float gridStep = 1.;
+    float minGrid = 1. + min(sin(pos.x / gridStep), min(sin(pos.y / gridStep), sin(pos.z / gridStep)));
+    if(minGrid < gridWidth)
+      color *= minGrid / gridWidth;*/
+
+    /*float grid = sign(sin(pos.x / gridStep)) * sign(sin(pos.y / gridStep)) * sign(sin(pos.z / gridStep));
+    if(grid<0.)
+      color *= 0.9;*/
+
+    //float grid = sin(pos.x / gridStep) + sin(pos.y / gridStep) + sin(pos.z / gridStep);
+    
+    //color += vec3(sin(pos.x / gridStep), sin(pos.y / gridStep), sin(pos.z / gridStep)) * 0.2;
+
+    //color = vec3(pos.z / 100.);
+    //color = normalize(color);
+
+    //color = vec3(l / 1000., snoise(pos.yzx * 0.02), snoise(pos.zxy * 0.03));
+    
+    //color = vec3(1.) * l / 1000.;
+
+    vec3 normal = normalSdf(pos);
+
+    
+    float shadowAngle;
+    float shadowCast = raycastDetailed(pos + normal * 2., u_toSun, 30, shadowAngle);
+    if(shadowCast < 50. && shadowCast > .1)
+      color *= 0.5;
+    /*else if (shadowAngle < 0.1)
+      color *= 0.3 + shadowAngle * 0.7;*/
+
+    normal = normalize(normal + 0.3 * normalSdf(pos * 10. + vec3(0., 0., -10000.) + 0.2 * normalSdf(pos.zxy * 10.23456 + vec3(45.4, 68.7, -10000.))));
+    //normal = normalize(normal + 0.2 * normalize(vec3(snoise(pos / 10.), snoise(pos.yzx / 10.), snoise(pos.zxy / 10.))));
+
+
+    /*float normalAngle = abs(dot(normal, ray));
+    if(normalAngle < 0.2)
+      color *= normalAngle * 10.;*/
+
+    outNormal = normal; 
+
+    //outNormal = vec4(0., 0., -1., 1.); 
+    //color = normalize(vec3(sin(pos.xy / 20.), 0.1)) * 2.; 
+    //color -= vec3(1., 1., 1.) * l / 5000.;
+  }
+
+  //outNormal = vec4(0., 0., 1., 1.);
+  outColor = vec4(color, 1.);
+
+  /*screenPos.z = l;
+  vec4 cameraPosition = u_raycastProjection * screenPos;*/
+
+  vec4 cameraPosition = u_worldViewProjection * vec4(pos, 1.);
+
+  //vec4 cameraPosition = u_worldViewProjection * vec4(pos, 1.);
+  
+  float depth = cameraPosition.z / cameraPosition.w;
+  gl_FragDepth = min(0.999999,depth);
+
+  //gl_FragDepth = cameraPosition.z;
+
+  //gl_FragDepth = 0.1;
+
+}</script>
+<script id="screen-f.glsl" type="glsl">#version 300 es
+precision highp float;
+
+const int r = 2;
+const float rscale = 1.;
+uniform sampler2D u_color;
+uniform vec2 u_bufferSize;
+
+in vec2 v_uv;
+
+out vec4 outColor;
+
+void main() {
+  vec4 srcColor = texture(u_color, v_uv);
+  vec3 color = pow(srcColor.xyz, vec3(1.0/2.2) );
+  if(length(color) > 2.){
+    color /= pow(length(color), 0.4);
+  }
+  outColor = vec4(color, 1.);
+  gl_FragDepth = 0.01;
+}
+
+</script>
+<script id="simple-geo-v.glsl" type="glsl">#version 300 es
+precision highp float;
+
+const vec3 norm[6] = vec3[](vec3(1,0,0), vec3(-1,0,0), vec3(0,1,0), vec3(0,-1,0), vec3(0,0,1), vec3(0,0,-1));
+const vec2 uv[6] = vec2[](vec2(0,0), vec2(0,1), vec2(1,1), vec2(0,0), vec2(1,1) ,vec2(1,0));
+const uint u255 = uint(255);
+
+uniform mat4 u_worldViewProjection;
+//uniform float u_time;
+
+in vec4 position;
+//in uint color;
+
+//out vec4 v_color;
+out vec2 v_texCoord;
+
+void main() {
+  v_texCoord = uv[int(mod(float(gl_VertexID),6.))];
+  vec4 v_position = u_worldViewProjection * position;
+  //v_color = vec4(float((color>>16)&u255)/255., float((color>>8)&u255)/255., float(color&u255)/255., 1.0);
+  gl_Position = v_position;
+}
+</script>
+<script id="sky-f.glsl" type="glsl">#version 300 es
+
+precision highp float;
+precision mediump sampler3D;
+
+in vec2 v_texCoord; 
+
+uniform mat4 u_raycastProjection;
+uniform vec3 u_toSun;
+
+layout(location=0) out vec4 outColor;
+layout(location=1) out vec3 outNormal;
+
+vec3 skyColor(vec3 ray){
+  vec3 color = (ray + 1.) * (dot(ray, u_toSun)>0.999?10.:1.);
+  float aVer = degrees(atan(ray.x, ray.y));
+  float aHor = degrees(atan(ray.z, length(ray.xy)));
+  color *= mod(aVer, 10.) < 0.1?1.5:1.;
+  color *= mod(aHor, 10.) < 0.1?1.5:1.;
+  color *= mod(aVer, 5.) < 0.1?1.5:1.;
+  color *= mod(aHor, 5.) < 0.1?1.5:1.;
+  color *= mod(aVer, .5) < 0.05?1.5:1.;
+  color *= mod(aHor, .5) < 0.05?1.5:1.;
+  return color;
+}
+
+void main() {  
+  vec4 screenPos = vec4(v_texCoord.x * 2. - 1., v_texCoord.y * 2. - 1., 0., 1.);
+  vec3 ray = normalize((u_raycastProjection * screenPos).xyz);  
+
+  outColor = vec4(skyColor(ray), 1.) * 0.3;
+  outNormal = vec3(0.);
+
+  gl_FragDepth = 0.999999;
+}</script>
+<script id="star-f.glsl" type="glsl">#version 300 es
+precision highp float;
+
+in vec2 v_texCoord;
+//in vec4 v_color;
+
+layout(location=0) out vec4 outColor;
+layout(location=1) out vec3 outNormal;
+
+float rand(float n){return fract(sin(n) * 43758.5453123);}
+
+void main() {
+  //if(length(v_texCoord+vec2(0.5)) > 1.5){
+  if(sin(v_texCoord.y * 200.) + sin(v_texCoord.x * 200.) > .0){
+    discard;
+    return;
+  }
+  //outColor = v_color;
+  outColor = vec4(0., 1., 0., 1.);
+  outNormal = vec3(0., 0., -1.);
+  //gl_FragDepth = 0.99;
+}</script>
+
+<script type="text/javascript" src="bundle.js"></script>
+
+</html>
